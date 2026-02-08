@@ -1,0 +1,16 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=development
+      - BROWSER_HEADLESS=true
+    volumes:
+      - ./index.ts:/app/index.ts
+      - ./src:/app/src
+    restart: unless-stopped

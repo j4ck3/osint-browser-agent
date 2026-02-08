@@ -1,0 +1,20 @@
+# Example: add this service to your existing OpenClaw docker-compose.yml
+#
+# The service name "hitta-search" becomes the hostname on the compose network,
+# so the skill's curl commands (http://hitta-search:3000/search) work automatically.
+
+services:
+  hitta-search:
+    image: ghcr.io/j4ck3/osint-browser-agent:master
+    # Or build from source:
+    # build:
+    #   context: ./osint-browser-agent
+    #   dockerfile: Dockerfile
+    environment:
+      - BROWSER_HEADLESS=true
+      - PORT=3000
+    restart: unless-stopped
+    # No ports needed — only accessed by other containers on the compose network.
+    # Uncomment to expose for local debugging:
+    # ports:
+    #   - "3000:3000"

@@ -1,0 +1,13 @@
+node_modules
+.git
+.env
+.env.*
+!.env.example
+.idea
+.DS_Store
+.cache
+coverage
+dist
+out
+*.log
+*.md

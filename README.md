@@ -1,85 +1,109 @@
 # OSINT Browser Agent
 
-A Bun-powered HTTP API that searches hitta.se for person information using browser automation via [agent-browser](https://github.com/vercel-labs/agent-browser).
+A person lookup service for [hitta.se](https://www.hitta.se) that searches by name or phone number and returns structured JSON. Uses browser automation via [agent-browser](https://github.com/vercel-labs/agent-browser) with deterministic parsing for fast, low-token-cost results.
+
+Built to run as a sidecar alongside [OpenClaw](https://github.com/openclaw/openclaw) in Docker Compose.
 
 ## Features
 
 - Search by name with optional filters (city, age range)
 - Reverse phone lookup
-- Enriched data extraction (relatives, previous addresses)
+- Enriched data extraction (relatives, previous addresses, email)
 - Swedish character support (å, ä, ö)
 - Persistent browser session for fast subsequent searches
 - RESTful JSON API
+- OpenClaw skill for seamless AI agent integration
 
-## Prerequisites
-
-- [Bun](https://bun.sh) runtime
-- Chromium browser (installed automatically)
-
-## Installation
+## Quick Start (Docker)
 
 ```bash
-# Install dependencies
+# Build and run locally
+docker compose -f compose.dev.yml up --build
+
+# Test
+curl -s http://localhost:3000/health
+curl -s http://localhost:3000/search \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Anders Andersson", "city": "Stockholm"}'
+```
+
+## Quick Start (bare metal)
+
+```bash
 bun install
-
-# Install Chromium for agent-browser
-npx agent-browser install
-
-# (Optional) Copy and configure environment
-cp .env.example .env
+bun run index.ts
 ```
 
-## Usage
+## OpenClaw Integration
+
+This service is designed to be called by an [OpenClaw](https://github.com/openclaw/openclaw) agent via the `exec` tool + `curl`. The included skill teaches the agent when and how to use it.
+
+### 1. Add the service to your OpenClaw compose
+
+Merge the contents of `openclaw-compose.example.yml` into your existing `docker-compose.yml`:
+
+```yaml
+services:
+  # ... your existing OpenClaw services ...
+
+  hitta-search:
+    image: ghcr.io/j4ck3/osint-browser-agent:master
+    environment:
+      - BROWSER_HEADLESS=true
+      - PORT=3000
+    restart: unless-stopped
+```
+
+The service name `hitta-search` becomes the hostname on the compose network. No ports need to be exposed externally.
+
+### 2. Install the skill
+
+Copy the skill into your OpenClaw skills directory:
 
 ```bash
-# Start the server
-bun run index.ts
+# Shared across all agents
+cp -r skills/hitta-se ~/.openclaw/skills/
 
-# The server will be available at http://localhost:3000
+# Or per-agent (workspace)
+cp -r skills/hitta-se ~/path/to/workspace/skills/
 ```
 
-## API Endpoints
+### 3. Restart OpenClaw
+
+The agent picks up the skill on the next session. Ask it something like:
+
+> "Look up Johan Eriksson in Stockholm"
+
+The agent will call:
+
+```bash
+curl -s http://hitta-search:3000/search \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Johan Eriksson", "city": "Stockholm"}'
+```
+
+And receive structured JSON back (~200-500 tokens) with name, age, address, phone, relatives, and more.
+
+## API Reference
 
 ### POST /search
 
 Search for a person by name or phone number.
 
-**Request Body:**
+| Field    | Type   | Required             | Description                   |
+| -------- | ------ | -------------------- | ----------------------------- |
+| `name`   | string | Either name or phone | Person's name                 |
+| `phone`  | string | Either name or phone | Phone number (Swedish format) |
+| `city`   | string | No                   | Filter by city                |
+| `ageMin` | number | No                   | Minimum age                   |
+| `ageMax` | number | No                   | Maximum age                   |
 
-```json
-{
-  "name": "Anders Andersson",
-  "city": "Stockholm",
-  "ageMin": 30,
-  "ageMax": 50
-}
-```
-
-Or search by phone:
-
-```json
-{
-  "phone": "+46701234567"
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | Either name or phone | Person's name to search |
-| `phone` | string | Either name or phone | Phone number (Swedish format) |
-| `city` | string | No | Filter by city |
-| `ageMin` | number | No | Minimum age filter |
-| `ageMax` | number | No | Maximum age filter |
-
-**Success Response (200):**
+**Success (200):**
 
 ```json
 {
   "success": true,
   "result": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
     "name": "Anders Andersson",
     "age": 42,
     "address": {
@@ -88,29 +112,15 @@ Or search by phone:
       "city": "Stockholm"
     },
     "phoneNumbers": ["+46701234567"],
-    "profileUrl": "https://hitta.se/anders+andersson/...",
-    "relatives": ["Anna Andersson", "Erik Andersson"],
-    "previousAddresses": [
-      {
-        "city": "Uppsala",
-        "postalCode": "753 10"
-      }
-    ],
-    "metadata": {
-      "scrapedAt": "2026-02-03T10:30:00.000Z",
-      "source": "hitta.se"
-    }
-  },
-  "query": {
-    "name": "Anders Andersson",
-    "city": "Stockholm",
-    "ageMin": 30,
-    "ageMax": 50
+    "relatives": ["Anna Andersson"],
+    "previousAddresses": [{ "postalCode": "753 10", "city": "Uppsala" }],
+    "email": "anders@example.com",
+    "profileUrl": "https://www.hitta.se/anders+andersson/stockholm/person/abc123"
   }
 }
 ```
 
-**Not Found Response (404):**
+**Not found (404):**
 
 ```json
 {
@@ -120,90 +130,44 @@ Or search by phone:
 }
 ```
 
-**Validation Error (400):**
-
-```json
-{
-  "success": false,
-  "error": "Validation failed",
-  "code": "VALIDATION_ERROR",
-  "details": "Either name or phone must be provided"
-}
-```
-
 ### GET /health
-
-Health check endpoint.
-
-**Response:**
 
 ```json
 {
   "status": "ok",
-  "timestamp": "2026-02-03T10:30:00.000Z",
+  "timestamp": "2026-02-08T10:30:00.000Z",
   "browser": "ready"
 }
 ```
 
-## Examples
-
-### Search by name
-
-```bash
-curl -X POST http://localhost:3000/search \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Anders Andersson", "city": "Stockholm"}'
-```
-
-### Search by phone
-
-```bash
-curl -X POST http://localhost:3000/search \
-  -H "Content-Type: application/json" \
-  -d '{"phone": "+46701234567"}'
-```
-
-### Search with age range
-
-```bash
-curl -X POST http://localhost:3000/search \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Åsa Björk", "city": "Göteborg", "ageMin": 25, "ageMax": 35}'
-```
-
-### Health check
-
-```bash
-curl http://localhost:3000/health
-```
-
 ## Configuration
 
-Environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | 3000 | HTTP server port |
-| `BROWSER_HEADLESS` | true | Run browser in headless mode |
-| `REQUEST_TIMEOUT_MS` | 30000 | Request timeout in milliseconds |
-
-## Performance
-
-- **First request:** ~3-5 seconds (browser startup)
-- **Subsequent requests:** ~1-2 seconds (persistent session)
-- **Memory usage:** ~150-200 MB (Chromium)
+| Variable             | Default | Description                     |
+| -------------------- | ------- | ------------------------------- |
+| `PORT`               | 3000    | HTTP server port                |
+| `BROWSER_HEADLESS`   | true    | Run browser in headless mode    |
+| `REQUEST_TIMEOUT_MS` | 30000   | Request timeout in milliseconds |
 
 ## Architecture
 
 ```
-HTTP Request → Fastify Server → BrowserService → agent-browser → hitta.se
-                                      ↓
-                              ScraperService (parse HTML)
-                                      ↓
-                            EnrichmentService (profile details)
-                                      ↓
-                              Person JSON Response
+OpenClaw agent
+    │ exec: curl http://hitta-search:3000/search ...
+    ▼
+Fastify Server → BrowserService → agent-browser → hitta.se
+                       │
+               ScraperService (deterministic regex parsing)
+                       │
+             EnrichmentService (profile page extraction)
+                       │
+               Structured JSON response (~200-500 tokens)
 ```
+
+## Performance
+
+- **First request:** ~3-5 seconds (browser cold start)
+- **Subsequent requests:** ~1-2 seconds (persistent session)
+- **Memory:** ~150-200 MB (Chromium)
 
 ## License
 
